@@ -35,26 +35,26 @@ Stage: build
      ~/miniconda.sh -b -p /opt/conda && \
      rm ~/miniconda.sh && \
      /opt/conda/bin/conda install -y python=$PYTHON_VERSION numpy scipy matplotlib h5py scikit-image && \
-     /opt/conda/bin/conda install -y -c pytorch torchvision torchaudio cudatoolkit=11.0 -c pytorch -y && \
+     /opt/conda/bin/conda install -y pytorch torchvision torchaudio cudatoolkit=11.0 -c pytorch -y && \
      /opt/conda/bin/conda install -y -c conda-forge scikit-sparse nibabel=2.5.1 pillow=7.1.1 && \
      /opt/conda/bin/conda clean -ya
 
     # Install FreeSurfer
-	 wget -qO- https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/6.0.1/freesurfer-Linux-centos6_x86_64-stable-pub-v6.0.1.tar.gz | tar zxv --no-same-owner -C /opt \
-    	--exclude='freesurfer/trctrain' \
-    	--exclude='freesurfer/subjects/fsaverage_sym' \
-    	--exclude='freesurfer/subjects/fsaverage3' \
-    	--exclude='freesurfer/subjects/fsaverage4' \
-    	--exclude='freesurfer/subjects/fsaverage5' \
-    	--exclude='freesurfer/subjects/fsaverage6' \
-    	--exclude='freesurfer/subjects/cvs_avg35' \
-    	--exclude='freesurfer/subjects/cvs_avg35_inMNI152' \
-    	--exclude='freesurfer/subjects/bert' \
-    	--exclude='freesurfer/subjects/V1_average' \
-    	--exclude='freesurfer/average/mult-comp-cor' \
-    	--exclude='freesurfer/lib/cuda' \
-    	--exclude='freesurfer/lib/qt'
-	 
+    wget -qO- https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/6.0.1/freesurfer-Linux-centos6_x86_64-stable-pub-v6.0.1.tar.gz | tar zxv --no-same-owner -C /opt \
+        --exclude='freesurfer/trctrain' \
+        --exclude='freesurfer/subjects/fsaverage_sym' \
+        --exclude='freesurfer/subjects/fsaverage3' \
+        --exclude='freesurfer/subjects/fsaverage4' \
+        --exclude='freesurfer/subjects/fsaverage5' \
+        --exclude='freesurfer/subjects/fsaverage6' \
+        --exclude='freesurfer/subjects/cvs_avg35' \
+        --exclude='freesurfer/subjects/cvs_avg35_inMNI152' \
+        --exclude='freesurfer/subjects/bert' \
+        --exclude='freesurfer/subjects/V1_average' \
+        --exclude='freesurfer/average/mult-comp-cor' \
+        --exclude='freesurfer/lib/cuda' \
+        --exclude='freesurfer/lib/qt'
+ 
 %environment
     export PATH=/opt/conda/bin:$PATH
     # Add FreeSurfer Environment variables (.license file needed, alternatively export FS_LICENSE=path/to/license)
