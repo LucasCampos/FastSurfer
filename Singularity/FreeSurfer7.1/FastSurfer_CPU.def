@@ -1,10 +1,12 @@
+## Start with Docker pytorch base
+
 Bootstrap: docker
-From: nvidia/cuda:11.0-cudnn8-runtime-ubuntu16.04
+From: ubuntu:16.04
 Stage: build
 
 %post
-# Install custom libraries + freesurfer 6.0 (and necessary dependencies)
-    export PYTHON_VERSION=3.6
+# Install custom libraries + freesurfer 7.1 (and necessary dependencies)
+
     apt-get update && apt-get install -y --no-install-recommends \
          build-essential \
          cmake \
@@ -26,35 +28,47 @@ Stage: build
          libgomp1 \
          libglu1-mesa \
 	 libglu1-mesa-dev \
-	 perl-modules && \
-         apt-get clean && \
+	 perl-modules
 
-    # Install miniconda and needed python packages (for FastSurferCNN)
+    mkdir -p /opt
+    wget -qO- https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/7.1.1/freesurfer-linux-centos6_x86_64-7.1.1.tar.gz | tar zxv --no-same-owner -C /opt
+
+    apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        git \
+        vim \
+        wget \
+        ca-certificates \
+        bzip2 \
+        libx11-6 \
+        libjpeg-dev \
+        libpng-dev \
+        bc \
+        tar \
+        zip \
+        gawk \
+        tcsh \
+        time \
+        wget \
+        libgomp1 \
+        libglu1-mesa \
+        libglu1-mesa-dev \
+        perl-modules && \
+    apt-get clean && \
+        
+
+# Install miniconda and needed python packages (for FastSurferCNN)
     wget -qO ~/miniconda.sh https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh  && \
-     chmod +x ~/miniconda.sh && \
-     ~/miniconda.sh -b -p /opt/conda && \
-     rm ~/miniconda.sh && \
-     /opt/conda/bin/conda install -y python=$PYTHON_VERSION numpy scipy matplotlib h5py scikit-image && \
-     /opt/conda/bin/conda install -y pytorch torchvision torchaudio cudatoolkit=11.0 -c pytorch -y && \
-     /opt/conda/bin/conda install -y -c conda-forge scikit-sparse nibabel=2.5.1 pillow=7.1.1 && \
-     /opt/conda/bin/conda clean -ya
+        chmod +x ~/miniconda.sh && \
+        ~/miniconda.sh -b -p /opt/conda && \
+        rm ~/miniconda.sh && \
+        /opt/conda/bin/conda install -y python=3.6 numpy scipy matplotlib h5py scikit-image && \
+        /opt/conda/bin/conda install -y -c pytorch cpuonly "pytorch=1.2.0=py3.6_cpu_0" torchvision=0.4.0=py36_cpu && \
+	/opt/conda/bin/conda install -y -c conda-forge scikit-sparse nibabel=2.5.1 pillow=8.2.0 && \
+        /opt/conda/bin/conda clean -ya
 
-    # Install FreeSurfer
-    wget -qO- https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/6.0.1/freesurfer-Linux-centos6_x86_64-stable-pub-v6.0.1.tar.gz | tar zxv --no-same-owner -C /opt \
-        --exclude='freesurfer/trctrain' \
-        --exclude='freesurfer/subjects/fsaverage_sym' \
-        --exclude='freesurfer/subjects/fsaverage3' \
-        --exclude='freesurfer/subjects/fsaverage4' \
-        --exclude='freesurfer/subjects/fsaverage5' \
-        --exclude='freesurfer/subjects/fsaverage6' \
-        --exclude='freesurfer/subjects/cvs_avg35' \
-        --exclude='freesurfer/subjects/cvs_avg35_inMNI152' \
-        --exclude='freesurfer/subjects/bert' \
-        --exclude='freesurfer/subjects/V1_average' \
-        --exclude='freesurfer/average/mult-comp-cor' \
-        --exclude='freesurfer/lib/cuda' \
-        --exclude='freesurfer/lib/qt'
- 
+
 %environment
     export PATH=/opt/conda/bin:$PATH
     # Add FreeSurfer Environment variables (.license file needed, alternatively export FS_LICENSE=path/to/license)
@@ -83,13 +97,9 @@ Stage: build
     echo "Container was created $NOW"
     echo "Arguments received: $*"
     cd /fastsurfer
-    exec bash ./run_fastsurfer.sh "$@"
+    exec bash ./run_fastsurfer.sh  --no_cuda "$@"
 
 
 %labels
     Author LQCC
     Version v0.0.1
-
-%help
-    This is a demo container used to illustrate a def file that uses all
-    supported sections.
