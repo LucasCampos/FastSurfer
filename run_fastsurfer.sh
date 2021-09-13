@@ -14,18 +14,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 VERSION='$Id$'
 
 # Set default values for arguments
+if [ -z "$FASTSURFER_HOME" ]
+then
+  echo "Setting ENV variable FASTSURFER_HOME to current working directory ${PWD}. "
+  echo "Change via enviroment to location of your choice if this is undesired (export FASTSURFER_HOME=/dir/to/FastSurfer)"
+  export FASTSURFER_HOME=${PWD}
+fi
+fastsurfercnndir="$FASTSURFER_HOME/FastSurferCNN"
+reconsurfdir="$FASTSURFER_HOME/recon_surf"
+
+# Regular flags defaults
 subject=""
 t1=""
 seg=""
 seg_log=""
-weights_sag="../checkpoints/Sagittal_Weights_FastSurferCNN/ckpts/Epoch_30_training_state.pkl"
-weights_ax="../checkpoints/Axial_Weights_FastSurferCNN/ckpts/Epoch_30_training_state.pkl"
-weights_cor="../checkpoints/Coronal_Weights_FastSurferCNN/ckpts/Epoch_30_training_state.pkl"
+weights_sag="$FASTSURFER_HOME/checkpoints/Sagittal_Weights_FastSurferCNN/ckpts/Epoch_30_training_state.pkl"
+weights_ax="$FASTSURFER_HOME/checkpoints/Axial_Weights_FastSurferCNN/ckpts/Epoch_30_training_state.pkl"
+weights_cor="$FASTSURFER_HOME/checkpoints/Coronal_Weights_FastSurferCNN/ckpts/Epoch_30_training_state.pkl"
 clean_seg=""
+viewagg="check"
 cuda=""
 batch_size="8"
 order="1"
@@ -40,8 +50,10 @@ fssurfreg=""
 doParallel=""
 threads="1"
 python="python3.6"
-fastsurfercnndir="./FastSurferCNN"
-reconsurfdir="./recon_surf"
+
+# Dev flags defaults
+vcheck=""
+vfst1=""
 
 function usage()
 {
@@ -57,10 +69,14 @@ function usage()
     echo -e "\t--t1  <T1_input>                       T1 full head input (not bias corrected)"
     echo -e "\t--seg <segmentation_input>             Name of intermediate DL-based segmentation file (similar to aparc+aseg). Requires an ABSOLUTE Path! Default location: \$SUBJECTS_DIR/\$sid/mri/aparc.DKTatlas+aseg.deep.mgz."
     echo -e "\t--seg_log <segmentation_log>           Log-file for the segmentation (FastSurferCNN). Default: \$SUBJECTS_DIR/\$sid/scripts/deep-seg.log"
-    echo -e "\t--weights_sag <weights_sagittal>       Pretrained weights of sagittal network. Default: ../checkpoints/Sagittal_Weights_FastSurferCNN/ckpts/Epoch_30_training_state.pkl"
-    echo -e "\t--weights_ax <weights_axial>           Pretrained weights of axial network. Default: ../checkpoints/Axial_Weights_FastSurferCNN/ckpts/Epoch_30_training_state.pkl"
-    echo -e "\t--weights_cor <weights_coronal>        Pretrained weights of coronal network. Default: ../checkpoints/Coronal_Weights_FastSurferCNN/ckpts/Epoch_30_training_state.pkl"
+    echo -e "\t--weights_sag <weights_sagittal>       Pretrained weights of sagittal network. Default: \$FASTSURFER_HOME/checkpoints/Sagittal_Weights_FastSurferCNN/ckpts/Epoch_30_training_state.pkl"
+    echo -e "\t--weights_ax <weights_axial>           Pretrained weights of axial network. Default: \$FASTSURFER_HOME/checkpoints/Axial_Weights_FastSurferCNN/ckpts/Epoch_30_training_state.pkl"
+    echo -e "\t--weights_cor <weights_coronal>        Pretrained weights of coronal network. Default: \$FASTSURFER_HOME/checkpoints/Coronal_Weights_FastSurferCNN/ckpts/Epoch_30_training_state.pkl"
     echo -e "\t--clean_seg <clean_segmentation>       Flag to clean up FastSurferCNN segmentation"
+    echo -e "\t--run_viewagg_on <check,gpu,cpu>       Define where the view aggregation should be run on. By default, the program checks if you have enough memory \
+                                                      to run the view aggregation on the gpu. The total memory is considered for this decision. If this fails, or \
+                                                      you actively overwrote the check with setting > --run_viewagg_on cpu <, view agg is run on the cpu. \
+                                                      Equivalently, if you define > --run_viewagg_on gpu <, view agg will be run on the gpu (no memory check will be done)."
     echo -e "\t--no_cuda <disable_cuda>               Flag to disable CUDA usage in FastSurferCNN (no GPU usage, inference on CPU)"
     echo -e "\t--batch <batch_size>                   Batch size for inference. Default: 8."
     echo -e "\t--order <order_of_interpolation>       Order of interpolation for mri_convert T1 before segmentation (0=nearest,1=linear(default),2=quadratic,3=cubic)"
@@ -76,6 +92,10 @@ function usage()
     echo -e "\t--threads <int>                        Set openMP and ITK threads to <int>"
     echo -e "\t--py <python_cmd>                      Command for python, default 'python3.6'"
     echo -e "\t-h --help                              Print Help"
+    echo ""
+    echo "Dev Flags"
+    echo -e "\t--ignore_fs_version                    Switch on to avoid check for FreeSurfer version. Program will otherwise terminate if v6.0 is not sourced. Can be used for testing dev versions."
+    echo -e "\t--no_fs_T1                             Do not generate T1.mgz (normalized nu.mgz included in standard FreeSurfer output) and create brainmask.mgz directly from norm.mgz instead. Saves approx. 1:30 min."
     echo ""
 }
 
@@ -148,6 +168,11 @@ case $key in
     clean_seg="--clean"
     shift # past argument
     ;;
+    --run_viewagg_on)
+    viewagg="$2"
+    shift # past argument
+    shift # past value
+    ;;
     --no_cuda)
     cuda="--no_cuda"
     shift # past argument
@@ -207,6 +232,14 @@ case $key in
     python="$2"
     shift # past argument
     shift # past value
+    ;;
+    --ignore_fs_version)
+    vcheck="--ignore_fs_version"
+    shift # past argument
+    ;;
+    --no_fs_T1 )
+    vfst1="--no_fs_T1"
+    shift # past argument
     ;;
     -h|--help)
     usage
@@ -286,7 +319,7 @@ if [ "$surf_only" == "0" ]; then
   echo "" |& tee -a $seg_log
 
   pushd $fastsurfercnndir
-  cmd="$python eval.py --in_name $t1 --out_name $seg --order $order --network_sagittal_path $weights_sag --network_axial_path $weights_ax --network_coronal_path $weights_cor --batch_size $batch_size --simple_run $clean_seg $cuda"
+  cmd="$python eval.py --in_name $t1 --out_name $seg --order $order --network_sagittal_path $weights_sag --network_axial_path $weights_ax --network_coronal_path $weights_cor --batch_size $batch_size --simple_run $clean_seg --run_viewagg_on $viewagg $cuda"
   echo $cmd |& tee -a $seg_log
   $cmd |& tee -a $seg_log
   if [ ${PIPESTATUS[0]} -ne 0 ] ; then exit 1 ; fi
@@ -297,7 +330,7 @@ if [ "$seg_only" == "0" ]; then
   # ============= Running recon-surf (surfaces, thickness etc.) ===============
   # use recon-surf to create surface models based on the FastSurferCNN segmentation.
   pushd $reconsurfdir
-  cmd="./recon-surf.sh --sid $subject --sd $sd --t1 $t1 --seg $seg $seg_cc $vol_segstats $fstess $fsqsphere $fsaparc $fssurfreg $doParallel --threads $threads --py $python"
+  cmd="./recon-surf.sh --sid $subject --sd $sd --t1 $t1 --seg $seg $seg_cc $vol_segstats $fstess $fsqsphere $fsaparc $fssurfreg $doParallel --threads $threads --py $python $vcheck $vfst1"
   $cmd
   if [ ${PIPESTATUS[0]} -ne 0 ] ; then exit 1 ; fi
   popd

@@ -16,22 +16,33 @@
 
 
 VERSION='$Id$'
+FS_VERSION_SUPPORT="stable-pub-v6"
+timecmd="fs_time"
 
-t1="";
-seg="";
-subject="";
+# Regular flags default
+t1=""; # Path and name of T1 input
+seg=""; # Path and name of segmentation
+subject=""; # Subject name
 seg_cc=0; # if 1, run pipeline only till corpus callosum is added (no surfaces will be created)
 vol_segstats=0; # if 1, return volume-based aparc.DKTatlas+aseg stats based on dl-prediction
 fstess=0;       # run mri_tesselate (FS way), if 0 = run mri_mc
 fsqsphere=0;    # run inflate1 and qsphere (FSway), if 0 run spectral projection
 fsaparc=0;	# run FS aparc (and cortical ribbon), if 0 map aparc from seg input
 fssurfreg=0;  # run FS surface registration to fsaverage, if 0 omit this step
+python="python3.6" # python version
+DoParallel=0 # if 1, run hemispheres in parallel
+threads="1" # number of threads to use for running FastSurfer
 
-timecmd="fs_time"
-binpath="./"
-python="python3.6"
-DoParallel=0
-threads="1"
+# Dev flags default
+check_version=1; # Run version check for FreeSurfer (terminate if anything but v6.0 is detected)
+get_t1=1; # Generate T1.mgz from nu.mgz and brainmask from it (default)
+
+if [ -z "$FASTSURFER_HOME" ]
+then
+  binpath="./"
+else
+  binpath="$FASTSURFER_HOME/recon_surf/"
+fi
 
 function usage()
 {
@@ -54,6 +65,10 @@ function usage()
     echo -e "\t--py <python_cmd>             Command for python, default 'python36'"
     echo -e "\t--fs_license <freesurfer_license_file>  Path to FreeSurfer license key file. Register (for free) at https://surfer.nmr.mgh.harvard.edu/registration.html to obtain it if you do not have FreeSurfer installed so far."
     echo -e "\t-h --help                     Print Help"
+    echo ""
+    echo "Dev Flags"
+    echo -e "\t--ignore_fs_version           Switch on to avoid check for FreeSurfer version. Program will otherwise terminate if v6.0 is not sourced. Can be used for testing dev versions."
+    echo -e "\t--no_fs_T1                    Do not generate T1.mgz (normalized nu.mgz included in standard FreeSurfer output) and create brainmask.mgz directly from norm.mgz instead. Saves approx. 1:30 min."
     echo ""
 }
 
@@ -219,6 +234,14 @@ case $key in
     shift # past argument
     shift # past value
     ;;
+    --ignore_fs_version)
+    check_version=0
+    shift # past argument
+    ;;
+    --no_fs_T1 )
+    get_t1=0
+    shift # past argument
+    ;;
     -h|--help)
     usage
     exit
@@ -251,6 +274,20 @@ then
   echo "export FREESURFER_HOME=/path/to/your/local/fs60"
   echo "source \$FREESURFER_HOME/SetUpFreeSurfer.sh"
   exit 1;
+fi
+
+if [ "$check_version" == "1" ]
+then
+  if grep -q -v ${FS_VERSION_SUPPORT} $FREESURFER_HOME/build-stamp.txt
+  then
+    echo "ERROR: You are trying to run recon-surf with FreeSurfer version $(cat $FREESURFER_HOME/build-stamp.txt)."
+    echo "We are currently only supporting FreeSurfer 6 Stable releases. Older versions are not compatible"
+    echo "and we do not recommend to use FreeSurfer v7 together with FastSurfer at this time."
+    echo "Therefore, make sure to export and source the correct FreeSurfer version before running recon-surf.sh: "
+    echo "export FREESURFER_HOME=/path/to/your/local/fs60"
+    echo "source \$FREESURFER_HOME/SetUpFreeSurfer.sh"
+    exit 1;
+  fi
 fi
 
 if [ -z "$PYTHONUNBUFFERED" ]
@@ -394,7 +431,7 @@ echo " " |& tee -a $LF
 
 # reduce labels to aseg, then create mask (dilate 5, erode 4, largest component), also mask aseg to remove outliers
 # output will be uchar (else mri_cc will fail below)
-cmd="$python reduce_to_aseg.py -i $mdir/aparc+aseg.orig.mgz -o $mdir/aseg.auto_noCCseg.mgz --outmask $mask"
+cmd="$python ${binpath}reduce_to_aseg.py -i $mdir/aparc+aseg.orig.mgz -o $mdir/aseg.auto_noCCseg.mgz --outmask $mask"
 RunIt "$cmd" $LF
 
 
@@ -434,21 +471,32 @@ echo " " |& tee -a $LF
 echo "============ Creating brainmask from aseg and norm, and update aseg ============" |& tee -a $LF
 echo " " |& tee -a $LF
 
-
-# create norm and brainmask by masking nu
+# create norm by masking nu
 cmd="mri_mask $mdir/nu.mgz $mdir/mask.mgz $mdir/norm.mgz"
 RunIt "$cmd" $LF
-pushd $mdir
-cmd="ln -sf norm.mgz brainmask.mgz"
-RunIt "$cmd" $LF
-popd
 
+if [ "$get_t1" == "1" ]
+then
+  # create T1.mgz from nu
+  cmd="mri_normalize -g 1 -mprage $mdir/nu.mgz $mdir/T1.mgz"
+  RunIt "$cmd" $LF
+
+  # create brainmask by masking T1
+  cmd="mri_mask $mdir/T1.mgz $mdir/mask.mgz $mdir/brainmask.mgz"
+  RunIt "$cmd" $LF
+else
+  # Default: create brainmask by linkage to norm.mgz (masked nu.mgz)
+  pushd $mdir
+  cmd="ln -sf norm.mgz brainmask.mgz"
+  RunIt "$cmd" $LF
+  popd
+fi
 
 # create aseg.auto including cc segmentation and add cc into aparc.DKTatlas+aseg.deep; 46 sec: (not sure if this is needed), requires norm.mgz
 cmd="mri_cc -aseg aseg.auto_noCCseg.mgz -o aseg.auto.mgz -lta $mdir/transforms/cc_up.lta $subject"
 RunIt "$cmd" $LF
 
-cmd="$python paint_cc_into_pred.py -in_cc $mdir/aseg.auto.mgz -in_pred $seg -out $mdir/aparc.DKTatlas+aseg.deep.withCC.mgz"
+cmd="$python ${binpath}paint_cc_into_pred.py -in_cc $mdir/aseg.auto.mgz -in_pred $seg -out $mdir/aparc.DKTatlas+aseg.deep.withCC.mgz"
 RunIt "$cmd" $LF
 
 if [ "$vol_segstats" == "1" ]
@@ -518,7 +566,7 @@ else
     RunIt "$cmd" $LF $CMDF
 
     # Rewrite surface orig.nofix to fix vertex locs bug (scannerRAS instead of surfaceRAS set with mc)
-    cmd="$python rewrite_mc_surface.py --input $sdir/$hemi.orig.nofix --output $sdir/$hemi.orig.nofix --filename_pretess $mdir/filled-pretess$hemivalue.mgz"
+    cmd="$python ${binpath}rewrite_mc_surface.py --input $sdir/$hemi.orig.nofix --output $sdir/$hemi.orig.nofix --filename_pretess $mdir/filled-pretess$hemivalue.mgz"
     RunIt "$cmd" $LF $CMDF
 
     # Check if the surfaceRAS was correctly set and exit otherwise (sanity check in case nibabel changes their default header behaviour)
@@ -559,7 +607,7 @@ else
     # instead of mris_sphere, directly project to sphere with spectral approach
     # equivalent to -qsphere
     # (23sec)
-    cmd="$python spherically_project_wrapper.py --hemi $hemi --sdir $sdir --subject $subject --threads=$threads --py $python"
+    cmd="$python ${binpath}spherically_project_wrapper.py --hemi $hemi --sdir $sdir --subject $subject --threads=$threads --py $python --binpath ${binpath}"
 
     RunIt "$cmd" $LF $CMDF
 
@@ -582,7 +630,7 @@ RunIt "$cmd" $LF $CMDF
     cmd="mris_make_surfaces -aseg aseg.presurf -white white.preaparc -noaparc -whiteonly -mgz -T1 brain.finalsurfs $subject $hemi"
   else
      # seems like surfaces from mri_mc cause segfaults in mris_make_surf from 6.0, so we need to use a copy of dev:
-     cmd="${binpath}mris_make_surfaces -aseg ../mri/aseg.presurf -white white.preaparc -noaparc -whiteonly -mgz -T1 brain.finalsurfs $subject $hemi"
+     cmd="${binpath}mris_make_surfaces -aseg aseg.presurf -white white.preaparc -noaparc -whiteonly -mgz -T1 brain.finalsurfs $subject $hemi"
   fi
   RunIt "$cmd" $LF $CMDF
 
@@ -607,10 +655,10 @@ echo "echo \" \"" |& tee -a $CMDF
     # this is dangerous, as some cortices could be < 0.6 mm, but then there is no volume label probably anyway.
     # Also note that currently we cannot mask non-cortex regions here, should be done in mris_anatomical stats later
     # the smoothing helps
-    cmd="mris_sample_parc -ct $FREESURFER_HOME/average/colortable_desikan_killiany.txt -file ./$hemi.DKTatlaslookup.txt -projmm 0.6 -f 5  -surf white.preaparc $subject $hemi aparc+aseg.orig.mgz aparc.mapped.prefix.annot"
+    cmd="mris_sample_parc -ct $FREESURFER_HOME/average/colortable_desikan_killiany.txt -file ${binpath}$hemi.DKTatlaslookup.txt -projmm 0.6 -f 5  -surf white.preaparc $subject $hemi aparc+aseg.orig.mgz aparc.mapped.prefix.annot"
     RunIt "$cmd" $LF $CMDF
 
-    cmd="$python smooth_aparc.py --insurf $sdir/$hemi.white.preaparc --inaparc $ldir/$hemi.aparc.mapped.prefix.annot --incort $ldir/$hemi.cortex.label --outaparc $ldir/$hemi.aparc.mapped.annot"
+    cmd="$python ${binpath}smooth_aparc.py --insurf $sdir/$hemi.white.preaparc --inaparc $ldir/$hemi.aparc.mapped.prefix.annot --incort $ldir/$hemi.cortex.label --outaparc $ldir/$hemi.aparc.mapped.annot"
     RunIt "$cmd" $LF $CMDF
 
 
@@ -639,9 +687,9 @@ echo "echo \" \"" |& tee -a $CMDF
     # creates pial using aparc, marching cube surfaces makes mris_make_surfaces crash here, so use dev binary in that case
     if [ "$fstess" == "1" ]
     then
-      cmd="mris_make_surfaces -orig_white white.preaparc -orig_pial white.preaparc -aseg ../mri/aseg.presurf -mgz -T1 brain.finalsurfs $subject $hemi"
+      cmd="mris_make_surfaces -orig_white white.preaparc -orig_pial white.preaparc -aseg aseg.presurf -mgz -T1 brain.finalsurfs $subject $hemi"
     else
-      cmd="${binpath}mris_make_surfaces -orig_white white.preaparc -orig_pial white.preaparc -aseg ../mri/aseg.presurf -mgz -T1 brain.finalsurfs $subject $hemi"
+      cmd="${binpath}mris_make_surfaces -orig_white white.preaparc -orig_pial white.preaparc -aseg aseg.presurf -mgz -T1 brain.finalsurfs $subject $hemi"
     fi
     RunIt "$cmd" $LF $CMDF
 else
